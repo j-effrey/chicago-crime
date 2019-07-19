@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+
+<head>
+	<meta charset="utf-8">
+	<title>Chicago Homicides</title>
+	<script src="https://d3js.org/d3.v5.min.js"></script>
+	<script src="https://d3js.org/topojson.v2.min.js"></script>
+	<link rel="stylesheet" href="styles.css">
+	<link href="https://fonts.googleapis.com/css?family=Noto+Sans:400,700" rel="stylesheet">
+</head>
+
+<body>
+	<div id="map"></div>
+	<div id="right">
+		<br>
+		<h2>Chicago Homicides</h2>
+		<p>In our data visualization, we hope to convey a more holistic picture of homicide data in Chicago from 2001 to now. Scrub through the selected time period to examine a section of Chicago's crime timeline, hover to find out information about
+			particular areas within Chicago (along with each area's trend in crime over the years), and filter based on homicides that resulted in arrests and based on domestic incidents (homicides where the victim was murdered by somebody they knew well).
+		</p>
+		<h2>The Story.</h2>
+		<p>From our visualization, you'll notice dense spots around the Austin, Englewood, and South Chicago districts. In fact, they're known to be Chicago's deadliest neighborhoods, based on both the magnitude of homicidal incidents and homocides per
+			100k population. The early 2010s saw some of the lowest homicide rates in decades (due to Chicago's newly in-place CompStat police program), but exploded in 2016 (most likely due to that year's declined policing on gun access and the surge of
+			factioning street gangs).</p>
+		<!-- <p style="font-size: 12px; text-align: center;">(drag over the slider to select a time range)</p> -->
+		<div id="controls">
+			<h2>Filter Homicides by: </h2>
+		</div>
+		<div id="buttons">
+			<button type="button" class="btn unclicked" name="button" onclick="showArrest()" id="arrest_button">Show Arrests</button>
+			<button type="button" class="btn unclicked" name="button" onclick="showDomestic()" id="domestic_button">Show Domestic</button>
+		</div>
+		<div id="totalDisplay">
+			<h3>Total homicides shown: <span id="total"></span></h3>
+		</div>
+	</div>
+
+	<script>
+		var showArrest;
+		var showDomestic;
+
+		var width = 480;
+		var height = 600;
+		var sliderWidth = 500;
+		var sliderHeight = 60;
+		var hoverWidth = 100;
+
+		var svg = d3.select("#map").append("svg")
+			.attr("width", 800)
+			.attr("height", 800);
+
+		var chart = svg.append("g")
+			.attr("id", "chart")
+			.attr("transform", "translate(80,80) rotate(0.5)");
+
+		var dots = svg.append("g")
+			.attr("id", "dots")
+			.attr("transform", "translate(80,80) rotate(0.5)");
+
+		var labels = svg.append("g")
+			.attr("id", "labels")
+			.attr("transform", "translate(80,80)");
+
+
+
+
+		// slider
+		// we would like to acknowledge the professors' lecture notes regarding
+		// the creation of our slider - many of his best practices regarding
+		// d3 and interactivity were put in place in our assignment.
+		let container = d3.select("#controls").append("p").attr("class", "control").attr("style", "text-align: center");
+		let canvas = container.append("svg").attr("width", sliderWidth).attr("height", sliderHeight);
+		let label = container.append("div").text("Year (per month granularity)");
+		let histoLayer = canvas.append("g");
+
+		const requestData = async () => {
+			const map = await d3.json("Boundaries.geojson");
+			const crime = await d3.csv("result.csv");
+			const expData = {};
+
+			crime.forEach(d => {
+				d["date"] = new Date((String(d["date"])));
+			});
+			// console.log(crime);
+
+			var projection = d3.geoTransverseMercator()
+				.rotate([88 + 20 / 60, -36 - 40 / 60])
+				.fitSize([width, height], map);
+
+			var path = d3.geoPath().projection(projection);
+
+			chart.selectAll("path")
+				.data(map.features)
+				.enter().append("path")
+				.attr("class", "region")
+				.attr("community_area", function(d) {
+
+					var a = {};
+
+					for (var i = 2001; i <= 2019; i++) {
+						a[String(i)] = {
+							"numHomi": 0,
+							"numArrest": 0
+						}
+					}
+					expData[d.properties.area_numbe] = a;
+
+					return d.properties.area_numbe;
+				})
+				.attr("community", function(d) {
+					return d.properties.community;
+				})
+				.attr("d", path);
+
+			dots.selectAll("circle")
+				.data(crime).enter()
+				.append("circle")
+				.attr("cx", function(d) {
+					return projection([d.longitude, d.latitude])[0];
+				})
+				.attr("cy", function(d) {
+					return projection([d.longitude, d.latitude])[1];
+				})
+
+				.attr("year", function(d) {
+					return d.year
+				})
+				.attr("community_area", function(d) {
+					var area_code = parseInt(d.community_area);
+
+					if (expData[area_code] != undefined) {
+						expData[area_code][d.year]["numHomi"] += 1;
+						if (d.arrest == "True") {
+							expData[area_code][d.year]["numArrest"] += 1;
+						}
+					}
+
+					return area_code
+				})
+				.attr("arrest", function(d) {
+					return d.arrest
+				})
+				.attr("domestic", function(d) {
+					return d.domestic
+				})
+				.attr("fill", "#ff3333")
+
+			// slider
+			let histoYear = crime.map(d => parseInt(d["year"]));
+			let histoMinMax = d3.extent(histoYear);
+			let histoScale = d3.scaleLinear().domain(histoMinMax).range([10, sliderWidth - 10]);
+
+			let yearValues = crime.map(d => d["date"]);
+			let minMax = d3.extent(yearValues);
+			let xScale = d3.scaleLinear().domain(minMax).range([10, sliderWidth - 10]);
+			let xAxis = d3.axisBottom(xScale);
+
+			let axisLayer = canvas.append("g")
+				.attr("transform", "translate(" + 0 + "," + (sliderHeight - 18) + ")")
+				.call(xAxis.ticks(11).tickFormat(d3.timeFormat("%Y")));
+
+			let numBins = 12;
+			let counts = d3.histogram().domain(minMax).thresholds(numBins)(yearValues);
+			let histoCount = d3.histogram().domain(histoMinMax).thresholds(numBins)(histoYear);
+
+
+			let yScale = d3.scaleLinear().domain(d3.extent(counts, d => d.length))
+				.range([sliderHeight - 18, 10]);
+
+			histoCount.forEach(d => {
+				d.xM = (d.x0 + d.x1) / 2.0;
+			});
+			counts.unshift({
+				xM: counts[0].x0,
+				length: counts[0].length
+			});
+			counts.push({
+				xM: counts[counts.length - 1].x1,
+				length: counts[counts.length - 1].length
+			});
+			histoCount.unshift({
+				xM: histoCount[0].x0,
+				length: histoCount[0].length
+			});
+			histoCount.push({
+				xM: histoCount[histoCount.length - 1].x1,
+				length: histoCount[histoCount.length - 1].length
+			});
+
+			let area = d3.area().x(d => histoScale(d.xM))
+				.y0(yScale(0))
+				.y1(d => yScale(d.length))
+				.curve(d3.curveNatural);
+
+			histoLayer.append("path").datum(histoCount)
+				.attr("class", "area")
+				.attr("d", area);
+
+				// techniques regarding filtering the data were also taken from the
+				// professor's lecture notes. We would like to cite his lecture notes
+				// from the `direct manipulation` slide in helping us create this.
+			var filters = {};
+
+			function evalFilters(d) {
+				let metCriteria = true;
+				d3.values(filters).forEach(filter => {
+					metCriteria = filter(d) && metCriteria;
+				});
+				return metCriteria;
+			}
+
+			function updateFilterAppearance() {
+				var homCount = 0;
+				dots.selectAll("circle")
+					.attr("opacity", d => (evalFilters(d)) ? 0.3 : 0)
+					.attr("r", d => (evalFilters(d)) ? 2 : 0);
+
+				dots.selectAll("circle").each(function() {
+					let current = d3.select(this).attr("r");
+					if (current == 2) {
+						homCount += 1;
+					}
+				});
+
+				d3.select("#total").text(homCount);
+			}
+			updateFilterAppearance();
+
+
+			var brush = d3.brushX()
+				.extent([
+					[10, 0],
+					[sliderWidth - 10, sliderHeight - 18]
+				])
+				.on("brush end", brushMoved);
+
+			canvas.append("g").call(brush);
+
+			function brushMoved() {
+				if (d3.event.selection !== null) {
+					let start = xScale.invert(d3.event.selection[0]);
+					let end = xScale.invert(d3.event.selection[1]);
+					let newFilter = d => d["date"] >= start && d["date"] <= end;
+					filters["date"] = newFilter;
+				} else {
+					let newFilter = function() {
+						return true;
+					}
+					filters["date"] = newFilter;
+				}
+				updateFilterAppearance();
+			}
+
+			var button1 = d3.select("#arrest_button");
+			var button2 = d3.select("#domestic_button");
+
+			showArrest = function() {
+				if (filters.hasOwnProperty("arrest")) {
+					delete filters["arrest"];
+					button1.attr("class", "btn unclicked");
+				} else {
+					let newFilter = d => d["arrest"] == "True";
+					filters["arrest"] = newFilter;
+					button1.attr("class", "btn clicked");
+				}
+				updateFilterAppearance();
+			};
+
+			showDomestic = function() {
+				if (filters.hasOwnProperty("domestic")) {
+					delete filters["domestic"];
+					button2.attr("class", "btn unclicked");
+				} else {
+					let newFilter = d => d["domestic"] == "True";
+					filters["domestic"] = newFilter;
+					button2.attr("class", "btn clicked");
+				}
+				updateFilterAppearance();
+			};
+
+			// experiment
+			const lineSVG = d3.select("svg#linechart");
+			const lineWidth = lineSVG.attr("width");
+			const lineHeight = lineSVG.attr("height");
+			const lineMargin = {
+				top: 10,
+				right: 10,
+				bottom: 35,
+				left: 35
+			};
+			const lineChartWidth = lineWidth - lineMargin.left - lineMargin.right;
+			const lineChartHeight = lineHeight - lineMargin.top - lineMargin.bottom;
+			let lineLayer = lineSVG.append("g").attr("class", ".line_layer").attr("transform", "translate(" + (lineMargin.left) + "," + lineMargin.top + ")");
+
+			let xLineScale = d3.scaleLinear().domain(histoMinMax).range([0, lineChartWidth]);
+			let xLineAxis = d3.axisBottom(xLineScale);
+
+			let yLineScale = d3.scaleLinear().domain([0, 1]).range([lineChartHeight, 0]);
+			let yLineAxis = d3.axisLeft(yLineScale);
+
+			var lines = d3.line()
+				.x(function(d) {
+					return xLineScale(d.year);
+				})
+				.y(function(d) {
+					return yLineScale(d.rate);
+				});
+
+			lineSVG.append("g")
+				.attr("class", "x axis")
+				.attr("transform", "translate(" + lineMargin.left + "," + (lineChartHeight + lineMargin.top + 10) + ")")
+				.call(xLineAxis.ticks(11).tickFormat(d3.format("")))
+				.selectAll("text")
+				.attr("dx", "-.8em")
+        .attr("dy", ".5em")
+        .attr("transform", "rotate(-40)");;
+
+			lineSVG.append("g")
+				.attr("class", "y axis")
+				.attr("transform", "translate(" + (lineMargin.left - 10) + "," + lineMargin.top + ")")
+				.call(yLineAxis);
+
+			chart.selectAll("path")
+				.on("mouseover", function(d) {
+					var area_code = d.properties.area_numbe;
+					var arrestRates = [];
+					var dt = expData[area_code];
+					for (var year in dt) {
+						var arrestRate = 1;
+						if (dt[year]["numHomi"] != 0) {
+							arrestRate = dt[year]["numArrest"] / dt[year]["numHomi"];
+						}
+						arrestRates.push({
+							"year": year,
+							"rate": arrestRate
+						});
+					}
+					// console.log(arrestRates);
+
+					lineLayer.append("path")
+						.datum(arrestRates)
+						.attr("class", "lines")
+						.attr("d", lines);
+
+					var labelId = d.properties.area_numbe;
+					var labelText = d.properties.community;
+					var textLength = labelText.length;
+					// console.log(labelId);
+
+					let areaCount = 0;
+
+					dots.selectAll("circle").each(function() {
+						let rad = d3.select(this).attr("r");
+						let id = d3.select(this).attr("community_area")
+						if (rad == 2 && Number(id) == Number(labelId)) {
+							areaCount += 1;
+						}
+					});
+
+
+					let currentTotal = Number(d3.select("#total").text());
+					let percentage = (areaCount * 100) / currentTotal;
+
+					var mouse = d3.mouse(this);
+					labels.append("text")
+						.attr("class", "label")
+						.attr("id", function() {
+							return "lb" + labelId
+						})
+						.attr("text-anchor", "middle")
+						.attr("font-weight", "bold")
+						.attr("x", mouse[0])
+						.attr("y", mouse[1] - 50)
+						.text(labelText);
+					labels.append("text")
+						.attr("class", "label")
+						.attr("id", function() {
+							return "lb2" + label
+						})
+						.attr("text-anchor", "middle")
+						.attr("x", mouse[0])
+						.attr("y", mouse[1] - 30)
+						.text("" + areaCount + " homicides");
+					labels.append("text")
+						.attr("class", "label")
+						.attr("id", function() {
+							return "lb2" + label
+						})
+						.attr("text-anchor", "middle")
+						.attr("x", mouse[0])
+						.attr("y", mouse[1] - 10)
+						.text("" + percentage.toFixed(3) + "% of total shown");
+
+					// let hoverData = crime.filter(d => parseInt(d['community_area']) == labelId);
+					// let hoverhistoYear = hoverData.map(d => parseInt(d["year"]));
+					// let hoverhistoMinMax = d3.extent(hoverhistoYear);
+					// let hoverhistoScale = d3.scaleLinear().domain(hoverhistoMinMax).range([10, hoverWidth - 10]);
+					// let hoverNumBins = [...new Set(hoverhistoYear)];
+					// let hoverhistoCount = d3.histogram().domain(hoverhistoMinMax).thresholds((hoverNumBins.length + 1) / 2)(hoverhistoYear);
+					//
+					// let hoveryScale = d3.scaleLinear().domain(d3.extent(hoverhistoCount, d => d.length))
+					// 	.range([sliderHeight - 18, 10]);
+					//
+					// let hoverArea = d3.area().x(d => hoverhistoScale(d.x0))
+					// 	.y0(hoveryScale(0))
+					// 	.y1(d => hoveryScale(d.length))
+					// 	.curve(d3.curveNatural);
+					//
+					// labels.append("path").datum(hoverhistoCount)
+					// 	.attr("class", "label area")
+					// 	.attr("d", hoverArea)
+					// 	.attr("transform", "translate(" + (mouse[0] - 50) + "," + (mouse[1] + 20) + ")");
+
+				})
+				.on('mouseout', function() {
+					d3.selectAll(".label").remove();
+					// experiment
+					d3.selectAll(".lines").remove();
+				});
+		}
+		requestData();
+	</script>
+	<!-- experiment -->
+	<div id="line">
+		<h2>Arrest Rate at Hovered Area</h2>
+		<svg id="linechart" width="230" height="230">
+
+		</svg>
+	</div>
+</body>
+
+</html>
